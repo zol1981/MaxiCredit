@@ -17,5 +17,8 @@ contract CreditScore {
             creditScoreChange = 223 + (_interest - limits[3]) / 16;
         }
         
+        if(creditScoreChange > 250) {
+            creditScoreChange = 250;
+        }
     }
 }
