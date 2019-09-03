@@ -1,22 +1,14 @@
 pragma solidity >=0.4.25;
-import "./TestCreditAgreement.sol";
-
-contract TestUsersInterface {
-    function registerUser(string _firstName, uint _birthDate, string _mothersFirstName, uint _idDocumentNumber,
-        uint _personalID, string _residentalAddress, string _emailAddress, uint _phoneNumber) public;
-    function getUserByID1(uint _id) public view returns(string, uint, string, uint, uint);
-    function getUserByID21(uint _id) public view returns(string, string, uint, uint);
-    function checkUserPersonalID(uint _personalID) public view returns(bool);
-    function checkUsersAddress(address _usersAddress) public view returns(bool);
-    function getUsersAddress(uint _usersId) public view returns(address);
-    function getUserByAddress(address _addr) public view returns(uint);
-}
+import "./TestCreditContract.sol";
 
 contract AgreementInterface {
-    function setToRedeemed() public;
+    function setToRedeemed(uint _changeCapital) public;
 }
 
-//Last updated by Zol, 2019.02.02
+//Last updated by Zol, 2019.09.01 
+//Check comments and do refactor
+//0x1731fe8cf8db39be44486eaf412fe00d5de36f54 TestCredit address
+
 
 contract TestCredit {
     
@@ -28,7 +20,7 @@ contract TestCredit {
     address SimpleTokenAddress = 0x5e12A8Ed676aa9Ce6B402B848BaD14E282b6C215;
     SimpleTokenInterface sti = SimpleTokenInterface(SimpleTokenAddress);
     
-    TestUsersInterface tui = TestUsersInterface(0x89DA0C515FFABAaa90602B70d76a4434c4118750);
+    TestUsersInterface tui = TestUsersInterface(0x3Ce63E7F60caDF49F9765c0d4e9359a7eC948900);
     
     address[] public serverAddress;
     mapping(address => bool) public isMCServer;
@@ -40,7 +32,7 @@ contract TestCredit {
         uint loanType;
         uint loanLength;
         uint periodNumber;
-        uint interestRate;
+        uint interestRate; //periodical
         uint minCreditScore;
         uint offerLastTo;
     }
@@ -54,20 +46,20 @@ contract TestCredit {
         uint loanType;
         uint loanLength;
         uint periodNumber;
-        uint interestRate;
+        uint interestRate; //periodical
         uint borrowersCreditScore;
         uint claimLastTo;
     } 
     CreditClaim[] public creditClaims;
     uint public creditClaimCounter = 0;
     
-    address public newCredit;
     address[] public Credits;
     uint[][] public creditsByExpiration; //public helyett inkább majd getter function kell
     uint public creditCounter = 0;
     
     constructor () public {
         contractOwner = msg.sender;
+        setServer(msg.sender);
     }
     
     modifier onlyOwnerOf(uint _userId) {
@@ -103,30 +95,56 @@ contract TestCredit {
     }
     
     function createCreditOffer(uint _loanAmount, uint _loanType, uint _loanLength, uint _periodNumber, uint _interestRate, uint _minCreditScore, uint _lastTo) public {
-        //require(isUserPersonalID[_lendersId] == true);
+        //require(tui.checkUsersAddress(msg.sender) == true);??
         require(sti.getTokenBalance(msg.sender) >= _loanAmount);
-        require(sti.allowance(msg.sender, this) >= _loanAmount);
+        require(sti.allowance(msg.sender, address(this)) >= _loanAmount);
         uint creditOfferLastTo = now + _lastTo;
         uint lendersId = getSenderId(msg.sender);
         creditOffers.push(CreditOffer(msg.sender, lendersId, _loanAmount, _loanType, _loanLength, _periodNumber, _interestRate, _minCreditScore, creditOfferLastTo));
         creditOfferCounter ++;
-        sti.transferFrom(msg.sender, this, _loanAmount);
+        sti.transferFrom(msg.sender, address(this), _loanAmount);
         emit CreditOfferCreated(creditOfferCounter, lendersId, _loanAmount, _loanType, _loanLength, _interestRate);
     }
     
     function createCreditClaim(uint _loanAmount, uint _loanType, uint _loanLength, uint _periodNumber, uint _interestRate, uint _lastTo) public {
-        uint toAllowAmount = _loanAmount + (_loanAmount * _interestRate / 100);
-        require(sti.allowance(msg.sender, this) >= toAllowAmount); 
+        uint toAllowAmount = calcReedem(_loanAmount, _periodNumber, _interestRate) * _periodNumber;
+        require(tui.checkUsersAddress(msg.sender) == true);
+        require(sti.allowance(msg.sender, address(this)) >= toAllowAmount); 
         uint creditClaimersId = getSenderId(msg.sender);
         uint creditScoreOfTheClaimer;
-        (,,,creditScoreOfTheClaimer)= tui.getUserByID21(creditClaimersId);
+        (creditScoreOfTheClaimer,)= tui.getUserPublicData(creditClaimersId);
         uint creditClaimLastTo = now + _lastTo;
         creditClaims.push(CreditClaim(msg.sender, creditClaimersId, _loanAmount, _loanType, _loanLength, _periodNumber, _interestRate, creditScoreOfTheClaimer, creditClaimLastTo));
         creditClaimCounter ++;
-        //allow funds for redeems   
         //end time of CreditClaim?
         //event
     }
+    
+    /*
+    Offerhandling may have its own smart contract
+    @@TODO onlyOwnerOfOffer, onlyOwnerOfclaim modifiers
+    function changeCreditOfferAmount(uint _offerId, uint _amount) public onlyOwnerOfOffer(_offerId){
+       creditOffers[_offerId].loanAmount -= _amount; 
+       sti.transfer(msg.sender, _amount);
+    }
+    
+    function changeCreditOfferAmount(uint _claimId, uint _amount) public onlyOwnerOfClaim(_claimId) {
+        creditClaims[_claimId].loanAmount -= _amount; 
+        sti.transfer(msg.sender, _amount);
+    }
+    
+    function deleteOffer(uint _offerId) public onlyOwnerOfOffer(_offerId){
+       creditOffers[_offerId].offerLastTo = 0;
+       sti.transfer(msg.sender, creditOffers[_offerId].loanAmount);
+       creditOffers[_offerId].loanAmount = 0;
+    }
+    
+    function deleteClaim(uint _claimId) public onlyOwnerOfclaim(_claimId){
+       creditClaims[_claimId].claimLastTo = 0;
+       sti.transfer(msg.sender, creditClaims[_claimId].loanAmount);
+       creditClaims[_claimId].loanAmount = 0;
+    }
+    */
 
     function getSenderId(address _addr) public view returns(uint) {
         uint claimerId = tui.getUserByAddress(_addr);
@@ -135,71 +153,110 @@ contract TestCredit {
     
     function getSenderCreditScore(address _addr) public view returns(uint) {
         uint claimerIdCreditScore;
-        (,,,claimerIdCreditScore) = tui.getUserByID21(tui.getUserByAddress(_addr));    
+        (claimerIdCreditScore,) = tui.getUserPublicData(tui.getUserByAddress(_addr));    
         return(claimerIdCreditScore);
     }
     
     //Minimum credit amount is 200
     function acceptCreditOffer(uint _offerId, uint _amount) public {
-        uint paybacksInterest = uint(_amount * creditOffers[_offerId].interestRate / 100); 
-        uint payback = _amount + paybacksInterest;
-        uint expiration = now + creditOffers[_offerId].loanLength;
+        uint paybacksInterest = creditOffers[_offerId].interestRate; //interestRate per periods
+        uint periods = creditOffers[_offerId].periodNumber;
+        uint newReedem = calcReedem(_amount, periods, paybacksInterest);
+        uint payback = newReedem * periods;
+        require(sti.allowance(msg.sender, address(this)) >= payback);
+        //require(creditOffers[_offerId].offerLastTo >= now);
         uint lender = creditOffers[_offerId].lendersId;
-        address lenderAddress = creditOffers[_offerId].lendersAddress;
-        
-        require(sti.allowance(msg.sender, this) >= payback);
-
         uint claimerId = getSenderId(msg.sender);
         uint claimerIdCreditScore = getSenderCreditScore(msg.sender);        
         require(claimerIdCreditScore >= creditOffers[_offerId].minCreditScore);
         require(creditOffers[_offerId].loanAmount >= _amount);
+        uint offeredLoanLength = creditOffers[_offerId].loanLength;
         uint amountToBorrower = _amount * 995 / 1000;
         uint amountToMC2 = _amount * 5 / 1000;
-        sti.transferLoan(msg.sender, amountToBorrower, creditOffers[_offerId].interestRate);
+        sti.transfer(msg.sender, amountToBorrower);
         sti.transfer(MC2Address, amountToMC2);
         creditOffers[_offerId].loanAmount -= _amount;
-
-        newCredit = new TestCreditAgreement(creditCounter, lender, lenderAddress, claimerId, _amount, paybacksInterest, expiration, this);
-        creditCounter = Credits.push(newCredit);
+        
+        TestCreditContract newCredit = new TestCreditContract(creditCounter, lender, claimerId, _amount, paybacksInterest, periods, newReedem, offeredLoanLength, address(this));
+        tui.setCreditContractAddress(address(newCredit), claimerId, creditCounter);
+        creditCounter = Credits.push(address(newCredit));
         //event
-     //   creditsByExpiration[expiration][creditCounter]; not working
     }
     
     //Minimum credit amount is 200
     function acceptCreditClaim(uint _claimId, uint _amount) public {
-        require(sti.allowance(msg.sender, this) >= _amount);
+        uint paybacksInterest = creditClaims[_claimId].interestRate;
+        uint loanClaimPeriods = creditClaims[_claimId].periodNumber;
+        uint loanClaimRedeem = calcReedem(_amount, loanClaimPeriods, paybacksInterest);
+        uint loanClaimMinApproval = loanClaimRedeem * loanClaimPeriods;
+        require(sti.allowance(msg.sender, address(this)) >= loanClaimMinApproval);
         require(creditClaims[_claimId].loanAmount >= _amount);
+        //require(creditClaims[_claimId].claimLastTo >= now);
+        
         uint creditor = getSenderId(msg.sender);
         uint creditReceiverId = creditClaims[_claimId].borrowersId;
-        uint paybacksInterest = uint(creditClaims[_claimId].interestRate * _amount / 100);
-        uint expiration = now + creditClaims[_claimId].loanLength;
+        
+        uint claimedLoanLength = creditClaims[_claimId].loanLength;
         uint amountToBorrower = _amount * 995 / 1000;
         uint amountToMC2 = _amount * 5 / 1000;
-        sti.transferFrom(msg.sender, this, _amount);
-        sti.transferLoan(creditClaims[_claimId].borrowersAddress, amountToBorrower, creditClaims[_claimId].interestRate);
+        sti.transferFrom(msg.sender, address(this), _amount);
+        sti.transferLoan(creditClaims[_claimId].borrowersAddress, amountToBorrower, paybacksInterest);
         sti.transfer(MC2Address, amountToMC2);
         creditClaims[_claimId].loanAmount -= _amount;
         
-        newCredit = new TestCreditAgreement(creditCounter, creditor, msg.sender, creditReceiverId, _amount, paybacksInterest, expiration, this);
-        creditCounter = Credits.push(newCredit);
+        TestCreditContract newCredit = new TestCreditContract(creditCounter, creditor, creditReceiverId, _amount, paybacksInterest, loanClaimPeriods, loanClaimRedeem, claimedLoanLength, address(this));
+        tui.setCreditContractAddress(address(newCredit), creditReceiverId, creditCounter);
+        creditCounter = Credits.push(address(newCredit));
         //event
     }
     
     function redeem(uint _creditId) public onlyServer {
-        TestCreditAgreement credit = TestCreditAgreement(Credits[_creditId]);
+        TestCreditContract credit = TestCreditContract(Credits[_creditId]);
         AgreementInterface ncredit = AgreementInterface(Credits[_creditId]);
-        require(now >= credit.loanExpiration());
-        address borrower = tui.getUsersAddress(credit.borrowerId()); 
-        uint paybackInterest = credit.interest();
-        uint paybackAmount = paybackInterest + credit.capital();
-        //sti.transferFrom(borrower, paybackAmount); //can use ERC20 like transferFrom to transfer direct to lender and MC2
+        uint lastRedeem = credit.lastReedem();
+        uint redeemPeriods = credit.periods();
+        require(redeemPeriods > lastRedeem);
+        require(now >= credit.loanExpiration(lastRedeem + 1));
+        address borrower = tui.getUsersAddress(credit.borrowerId(), 0); 
+        uint paybackAmount = credit.toPayBack();
+        uint currentCapital = credit.capital();
+        uint loansInterestRate = credit.interestRate();
+        uint currentInterest = uint(currentCapital * loansInterestRate / 100);
+        uint changeCapital = paybackAmount - currentInterest;
+        
         address ownerOfLendingContract = credit.owner();
-        uint MC2Part = paybackInterest / 10;
+        uint fee = uint(currentInterest / 10);
+        uint MC2Part;
+        if(fee >= 1) {
+            MC2Part = fee;
+        } else {
+            MC2Part = 1;
+        }
         uint ownerRedeemPart = paybackAmount - MC2Part;
         sti.transferFrom(borrower, ownerOfLendingContract, ownerRedeemPart);
         sti.transferFrom(borrower, MC2Address, MC2Part);
-        ncredit.setToRedeemed();
+        ncredit.setToRedeemed(changeCapital);
         paybackAmount = 0;
-        //event
+    }
+    
+    //Reuseable, should be in custom contract/library
+    function calcReedem (uint _amount, uint _period, uint _rate) private pure returns(uint) { 
+        uint pow = 1;
+        uint onePerPow = 1000000000000;
+        uint ratePlus = _rate + 100;
+        if(_period == 1) {
+            pow *= ratePlus * 100;
+        } else {
+            for(uint i = 1; i <= _period; i++) {
+                pow *= ratePlus;
+                if(i > 2) {
+                    pow /= 100; 
+                }
+            }
+        }
+        onePerPow /= pow;
+        uint oneMinus = 100000000 - onePerPow;
+        uint currentRedeem = uint(_amount * _rate * 1000000 / oneMinus);
+        return(currentRedeem);
     }
 }
